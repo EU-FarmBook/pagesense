@@ -26,6 +26,7 @@ venv*/
 .env
 .env.*
 !.env.sample
+!.env.*.sample
 
 # OS cruft
 .DS_Store

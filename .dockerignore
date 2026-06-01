@@ -30,6 +30,7 @@ venv*/
 .env
 .env.*
 !.env.sample
+!.env.*.sample
 
 # OS cruft
 .DS_Store
@@ -40,3 +41,6 @@ output/
 *.tmp
 *.bak
 *.swp
+*.json
+*.db
+docker-compose-online.yml

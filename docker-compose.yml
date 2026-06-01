@@ -1,0 +1,14 @@
+services:
+  pagesense:
+    container_name: pagesense
+    build:
+      context: .
+    image: ghcr.io/eu-farmbook/pagesense:latest
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: "2g"
+    mem_reservation: "1g"
+    environment:
+      - GUNICORN_CMD_ARGS=--timeout 45
+    ports:
+      - "10000:10000"

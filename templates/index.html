@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>HTML Body → Text</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        :root { --bg:#0b0f14; --panel:#121821; --muted:#9fb0c3; --text:#e9eef4; --accent:#7cc4ff; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            margin: 0; padding: 0; background: var(--bg); color: var(--text);
+            font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+        }
+        .wrap { max-width: 980px; margin: 0 auto; padding: 20px; }
+        h1 { font-weight: 600; font-size: 20px; margin: 0 0 12px; letter-spacing: .2px; }
+
+        /* Top bar */
+        .bar {
+            display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px;
+            background: var(--panel); padding: 10px; border-radius: 12px; border: 1px solid #223043;
+            position: sticky; top: 0; z-index: 3;
+        }
+        input[type="url"] {
+            width: 100%; background: #0f1520; border: 1px solid #223043; color: var(--text);
+            border-radius: 10px; padding: 10px 12px; outline: none;
+        }
+        button {
+            background: #1a2434; color: var(--text); border: 1px solid #223043;
+            border-radius: 10px; padding: 10px 14px; cursor: pointer;
+        }
+        button:hover { background: #1e2a3e; }
+        .secondary { background: #0f1520; }
+
+        /* Result panel */
+        .panel {
+            margin-top: 12px; background: var(--panel); border: 1px solid #223043; border-radius: 12px;
+            padding: 12px;
+        }
+        .error { color: #ff6b6b; margin-top: 12px; }
+        .muted { color: var(--muted); font-size: 12px; }
+        .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+
+        textarea {
+            width: 100%; height: 70vh; background: #0f1520; color: var(--text);
+            border: 1px solid #223043; border-radius: 10px; padding: 12px; white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>PageSense - Extract body text</h1>
+
+    <!-- Top sticky bar -->
+    <form method="post" class="bar">
+      <!-- URL input (name must stay "url") -->
+      <input
+        type="url"
+        name="url"
+        placeholder="https://example.com/article"
+        required
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <button type="submit">Submit</button>
+      <button type="button" class="secondary" id="copyBtn" title="Copy extracted text">Copy</button>
+    </form>
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <div class="panel">
+      <div class="row">
+        <div class="muted">Extracted text</div>
+        <div style="text-align:right">
+          <div class="muted" id="stats"></div>
+          <div class="muted" id="metrics">
+            {% if result_meta %}
+              {{ result_meta.duration_ms }} ms • {{ result_meta.downloaded_human }} downloaded • {{ result_meta.extracted_human }} extracted{% if result_meta.page_count %} • {{ result_meta.page_count }} pages{% endif %}{% if result_meta.duration_human %} • {{ result_meta.duration_human }} media{% endif %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <textarea id="out" readonly placeholder="The extracted text will appear here…">{{ text_result or "" }}</textarea>
+    </div>
+  </div>
+
+<script>
+    // Copy to clipboard
+    document.getElementById('copyBtn')?.addEventListener('click', () => {
+      const ta = document.getElementById('out');
+      if (!ta || !ta.value) return;
+      ta.select();
+      document.execCommand('copy');
+    });
+
+    // Live stats: chars & approx words
+    (function(){
+      const ta = document.getElementById('out');
+      const stats = document.getElementById('stats');
+      if (!ta || !stats) return;
+      const t = ta.value || "";
+      const chars = t.length;
+      const words = (t.trim().match(/\S+/g) || []).length;
+      stats.textContent = chars ? `${words} words • ${chars} chars` : "";
+    })();
+  </script>
+</body>
+</html>
