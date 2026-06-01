@@ -1,12 +1,13 @@
 # PageSense
 
-PageSense is a small Flask app that fetches a public URL and returns readable text. It supports both regular HTML pages and text-based PDFs, with a browser fallback for pages that render most of their content client-side.
+PageSense is a small Flask app that fetches a public URL and returns readable text or a short file summary. It supports regular HTML pages, text-based PDFs, DOCX files, and PPTX files, with a browser fallback for pages that render most of their content client-side. Media and data-file URLs are detected and reported instead of being treated as HTML.
 
 ## What it does
 
 - Accepts a single `http` or `https` URL.
 - Fetches HTML with streaming reads, timeouts, and size caps.
-- Extracts text from text-based PDFs.
+- Extracts text from text-based PDFs, DOCX files, and PPTX files.
+- Detects media files and common data files, returning file metadata instead of noisy raw content.
 - Removes scripts, forms, media, navigation, overlays, paywall markers, cookie banners, and other common non-content elements.
 - Falls back to Playwright/Chromium only when the plain HTTP result looks script-driven or the upstream response cannot be decoded reliably.
 - Exposes both a browser UI and a JSON API at `/api/extract`.
@@ -19,7 +20,7 @@ PageSense is a small Flask app that fetches a public URL and returns readable te
 - Common video-platform hosts such as YouTube, Vimeo, Dailymotion, Twitch, and TikTok are blocked.
 - Default limits:
   - HTML: 5 MB
-  - PDF: 50 MB
+  - Files: 50 MB
   - HTTP timeout: connect 10s, read 30s
   - Browser timeout: 30s
   - Total extraction budget: 30s
@@ -29,10 +30,12 @@ PageSense is a small Flask app that fetches a public URL and returns readable te
 
 - Python 3.10+
 - Flask
+- Flask-CORS
 - Requests
 - BeautifulSoup4 + lxml
 - pypdf
 - Playwright + Chromium
+- Gunicorn
 
 ## Quick start
 
@@ -66,9 +69,11 @@ curl -sS http://127.0.0.1:8006/api/logs \
   -H 'Authorization: Bearer change-me'
 ```
 
-Interactive API docs are available at `/docs`, with the OpenAPI schema at `/openapi.json`.
+Interactive API docs are available at `/docs`, with the OpenAPI schema at `/openapi.json`. API routes allow CORS from any origin.
 
 For server deployment behind Traefik, use [docker-compose-online.yml](docker-compose-online.yml) and [`.env.online.sample`](.env.online.sample) as the starting point. It mounts `./data` into the container so `requests.db` survives container recreation.
+
+The Docker image installs Chromium dependencies and `ffmpeg`; `ffprobe` is used when possible to report media duration.
 
 To build and push the container image to GHCR from the project root, use [build_and_push.sh](build_and_push.sh):
 
@@ -111,7 +116,12 @@ curl -sS -X POST http://127.0.0.1:8006/api/extract \
 - [pagesense/services/extractor.py](pagesense/services/extractor.py): URL validation, fetch flow, HTML cleanup, and browser fallback.
 - [pagesense/services/request_logs.py](pagesense/services/request_logs.py): SQLite request logging.
 - [pagesense/services/openapi.py](pagesense/services/openapi.py): OpenAPI schema generation.
-- [pagesense/browser.py](pagesense/browser.py): Playwright and PDF helpers.
+- [pagesense/browser.py](pagesense/browser.py): Playwright, PDF, DOCX, and PPTX helpers.
+- [templates/index.html](templates/index.html): browser UI template.
+- [view_logs.py](view_logs.py): local SQLite log viewer.
+- [utils.py](utils.py): compatibility exports for browser and PDF helpers.
+- [tests/test_app.py](tests/test_app.py): lightweight unittest coverage.
+- [Dockerfile](Dockerfile) and [docker-compose.yml](docker-compose.yml): container build and local compose config.
 
 ## Tests
 
