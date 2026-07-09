@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from pagesense import create_app
-from pagesense.services.extractor import extract_clean_text
+from pagesense.services.extractor import extract_clean_text, is_allowed_url, is_private_host
 
 
 class PageSenseAppTests(unittest.TestCase):
@@ -80,6 +80,32 @@ class PageSenseAppTests(unittest.TestCase):
         self.assertEqual(row[4], "203.0.113.99")
         self.assertEqual(row[5], 200)
         self.assertEqual(row[6], 1)
+
+    def test_blocks_ssrf_ip_encodings(self) -> None:
+        # Literal-IP forms that need no DNS resolution to classify.
+        blocked_urls = [
+            "http://127.0.0.1/",
+            "http://[::1]/",
+            "http://0.0.0.0/",
+            "http://[::]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://169.254.169.254/",
+            "http://100.64.0.1/",
+        ]
+        with self.app.app_context():
+            for url in blocked_urls:
+                self.assertFalse(is_allowed_url(url), url)
+
+    def test_blocks_private_ip_hosts(self) -> None:
+        with self.app.app_context():
+            self.assertTrue(is_private_host("::ffff:169.254.169.254"))
+            self.assertTrue(is_private_host("0.0.0.0"))
+            self.assertFalse(is_private_host("93.184.216.34"))
+
+    def test_allows_public_ip(self) -> None:
+        with self.app.app_context():
+            self.assertTrue(is_allowed_url("http://93.184.216.34/page"))
 
     def test_cleanup_keeps_content_sidebar_but_removes_real_sidebar(self) -> None:
         html = """

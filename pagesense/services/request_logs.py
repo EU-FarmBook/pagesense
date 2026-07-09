@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from pathlib import Path
@@ -10,13 +11,40 @@ from flask import current_app, request
 from pagesense.config import AppConfig
 
 
+LOGGER = logging.getLogger(__name__)
+
+# Wait up to this long for a competing writer to release the lock before
+# raising "database is locked". Multiple gunicorn workers share one SQLite file.
+_SQLITE_BUSY_TIMEOUT_MS = 3000
+
+
+def _connect(db_path: str | Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=_SQLITE_BUSY_TIMEOUT_MS / 1000)
+    # WAL lets readers and a writer proceed concurrently; busy_timeout makes
+    # writers wait for the lock instead of failing immediately under contention.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+    return conn
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, column: str, coltype: str) -> None:
+    # Idempotent and race-safe: several gunicorn workers run this on boot at
+    # once, so a check-then-ALTER guard TOCTOUs. Just add it and tolerate the
+    # loser's "duplicate column name" error.
+    try:
+        conn.execute(f"ALTER TABLE request_logs ADD COLUMN {column} {coltype}")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
+
+
 def init_request_log_db(config: AppConfig) -> None:
     if not config.request_logging_enabled:
         return
 
     db_path = Path(config.request_log_db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with _connect(db_path) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS request_logs (
@@ -47,15 +75,8 @@ def init_request_log_db(config: AppConfig) -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_source ON request_logs(source)")
-        existing_columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(request_logs)").fetchall()
-        }
-        if "downloaded_bytes" not in existing_columns:
-            conn.execute("ALTER TABLE request_logs ADD COLUMN downloaded_bytes INTEGER")
-        if "extracted_text_bytes" not in existing_columns:
-            conn.execute("ALTER TABLE request_logs ADD COLUMN extracted_text_bytes INTEGER")
-        if "page_count" not in existing_columns:
-            conn.execute("ALTER TABLE request_logs ADD COLUMN page_count INTEGER")
+        for column in ("downloaded_bytes", "extracted_text_bytes", "page_count"):
+            _add_column_if_missing(conn, column, "INTEGER")
 
 
 def get_client_ip() -> tuple[str | None, str | None]:
@@ -109,40 +130,44 @@ def log_request_event(
         "accept": request.headers.get("Accept"),
     }
 
-    with sqlite3.connect(config.request_log_db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO request_logs (
-                created_at, source, method, path, client_ip, forwarded_for,
-                user_agent, referer, target_url, query_string, request_content_type,
-                request_payload, response_status, ok, resolved_url, error_message,
-                duration_ms, downloaded_bytes, extracted_text_bytes, page_count, headers_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                source,
-                request.method,
-                request.path,
-                client_ip,
-                forwarded_for,
-                request.headers.get("User-Agent"),
-                request.headers.get("Referer"),
-                target_url,
-                request.query_string.decode("utf-8", errors="replace") or None,
-                request.content_type,
-                serialize_request_payload(),
-                response_status,
-                1 if ok else 0,
-                resolved_url,
-                error_message,
-                int((time.monotonic() - started_at) * 1000),
-                downloaded_bytes,
-                extracted_text_bytes,
-                page_count,
-                json.dumps(headers_snapshot, ensure_ascii=True, sort_keys=True),
-            ),
-        )
+    try:
+        with _connect(config.request_log_db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO request_logs (
+                    created_at, source, method, path, client_ip, forwarded_for,
+                    user_agent, referer, target_url, query_string, request_content_type,
+                    request_payload, response_status, ok, resolved_url, error_message,
+                    duration_ms, downloaded_bytes, extracted_text_bytes, page_count, headers_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    source,
+                    request.method,
+                    request.path,
+                    client_ip,
+                    forwarded_for,
+                    request.headers.get("User-Agent"),
+                    request.headers.get("Referer"),
+                    target_url,
+                    request.query_string.decode("utf-8", errors="replace") or None,
+                    request.content_type,
+                    serialize_request_payload(),
+                    response_status,
+                    1 if ok else 0,
+                    resolved_url,
+                    error_message,
+                    int((time.monotonic() - started_at) * 1000),
+                    downloaded_bytes,
+                    extracted_text_bytes,
+                    page_count,
+                    json.dumps(headers_snapshot, ensure_ascii=True, sort_keys=True),
+                ),
+            )
+    except sqlite3.Error as exc:
+        # Logging must never fail the request it is recording.
+        LOGGER.warning("failed to write request log: %s", exc)
 
 
 def get_logs_from_db(*, limit: int, offset: int, source: str | None = None, ok: int | None = None) -> list[dict[str, object]]:
@@ -167,7 +192,7 @@ def get_logs_from_db(*, limit: int, offset: int, source: str | None = None, ok: 
     query += " ORDER BY id DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
-    with sqlite3.connect(config.request_log_db_path) as conn:
+    with _connect(config.request_log_db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, params).fetchall()
 

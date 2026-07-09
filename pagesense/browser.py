@@ -8,10 +8,8 @@ from io import BytesIO
 from typing import Callable
 from xml.etree import ElementTree as ET
 
-from pypdf import PdfReader, filters
+from pypdf import PdfReader
 from playwright.sync_api import sync_playwright
-
-filters.ZLIB_MAX_OUTPUT_LENGTH = 0
 
 
 _thread_state = threading.local()

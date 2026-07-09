@@ -72,6 +72,24 @@ def is_blocked_media_host(hostname: str | None) -> bool:
     return _is_blocked_media_host_for_config(hostname, get_config())
 
 
+def _is_blocked_ip(ip: ipaddress._BaseAddress, private_nets: list[ipaddress._BaseNetwork]) -> bool:
+    # IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) connects to the underlying v4
+    # address, so evaluate that form rather than the outer IPv6 wrapper.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return True
+    return any(ip in net for net in private_nets)
+
+
 def _is_private_host_for_config(hostname: str | None, config: AppConfig) -> bool:
     if not hostname:
         return True
@@ -79,23 +97,26 @@ def _is_private_host_for_config(hostname: str | None, config: AppConfig) -> bool
     private_nets = _get_private_networks_for_config(config)
     try:
         ip = ipaddress.ip_address(hostname)
-        return any(ip in net for net in private_nets)
+        return _is_blocked_ip(ip, private_nets)
     except ValueError:
         pass
 
     try:
         addrinfo = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
-        return False
+        # Fail closed: a name we cannot resolve here must not be treated as safe.
+        return True
 
+    resolved_any = False
     for ip_text in {item[4][0] for item in addrinfo if item[4]}:
         try:
             ip = ipaddress.ip_address(ip_text)
         except ValueError:
             continue
-        if any(ip in net for net in private_nets):
+        resolved_any = True
+        if _is_blocked_ip(ip, private_nets):
             return True
-    return False
+    return not resolved_any
 
 
 def is_private_host(hostname: str | None) -> bool:
