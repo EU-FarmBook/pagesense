@@ -12,7 +12,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: EU-FarmBook/ci-workflows/.github/workflows/build-and-deploy.yml@main
+    uses: EU-FarmBook/ci-workflows/.github/workflows/build-and-deploy.yml@v1
     with:
       service: pagesense
-    secrets: inherit
+    # Named, not `secrets: inherit`: inherit forwards every secret the caller
+    # can see, which is an organisation-level fact this repository cannot audit.
+    secrets:
+      PLATFORM_REPO_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
